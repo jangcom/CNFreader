@@ -30,23 +30,46 @@ All the information of the binary file encoding was taken from the file
 
 
 """
-
+import os
 import sys
+import re
 import numpy as np
 import time
 import struct
+import pandas as pd
 
 
-def read_cnf_file(filename, write_output=False):
+def show_file_gen(fname):
+    """Show a file has been generated.
+
+    Parameters
+    ----------
+    fname : str
+        A file name to be reported.
+
+    Returns
+    -------
+    None.
+    """
+    print(f'[{fname}] generated.')
+
+
+def read_cnf_file(filename, out_path,
+                  write_output=False, is_str_kev_to_MeV=True):
     """
     Reads data of a Canberra Nuclear File used by the Genie2000 software.
 
     Parameters
     ----------
-    filename : string
+    filename : str
         Name of the file to be read.
-    write_output : boolean, optional
+    out_path : str
+        The path to which output files will be saved.
+    write_output : bool, optional
         Indicate weather to write an output file or not.
+    is_str_kev_to_MeV : bool, optional
+        If True, the string 'MeV' is recast to 'keV' while the actual energy
+        values remain unchanged.
 
     Returns
     -------
@@ -92,9 +115,12 @@ def read_cnf_file(filename, write_output=False):
     (mainly dwell time).
 
     """
-
-    # Name of the output file
-    out_filename = filename + '.txt'
+    # Names of the output files
+    out_fmts = ['dat', 'csv', 'xlsx']
+    out_bname = os.path.splitext(os.path.basename(filename))[0]
+    out_bname_full = '{}/{}'.format(out_path, out_bname)
+    out_fnames_full = {fmt: '{}.{}'.format(out_bname_full, fmt)
+                       for fmt in out_fmts}
 
     # Dictionary with all the information read
     read_dic = {}
@@ -149,13 +175,38 @@ def read_cnf_file(filename, write_output=False):
     if set(('Channels', 'Left marker')) <= set(read_dic):
         read_dic.update(markers_integration(read_dic))
 
+    # Recast the energy unit from MeV to keV.
+    if is_str_kev_to_MeV:
+        read_dic['Energy unit'] = re.sub('MeV', 'keV', read_dic['Energy unit'])
+
     print(50*'=')
     print(10*' '+'File '+str(filename)+' succesfully read!' + 10*' ')
     print(50*'=')
 
-    # If true, writes an text output file
+    # Create a DF.
+    the_data = {
+        'Channel (ch)': read_dic['Channels'],
+        'Energy ({})'.format(read_dic['Energy unit']): read_dic['Energy'],
+        'Count (cnt)': read_dic['Channels data'],
+    }
+    df = pd.DataFrame(the_data)
+    df.set_index('Channel (ch)', inplace=True)
+
+    # File writing
     if write_output:
-        write_to_file(out_filename, read_dic)
+        if not os.path.exists(out_path):
+            os.mkdir(out_path)
+            show_file_gen(out_path)
+        # Write the .cnf data to a plain text (.dat) file.
+        write_to_file(out_fnames_full['dat'], read_dic,
+                      is_str_kev_to_MeV=is_str_kev_to_MeV)
+        # Write the .cnf data to .csv and .xlsx files using pandas.
+        df.to_csv(out_fnames_full['csv'])
+        df.style.background_gradient().to_excel(out_fnames_full['xlsx'])
+
+        # Report file generation.
+        for fmt in out_fmts:
+            show_file_gen(out_fnames_full[fmt])
 
     return read_dic
 
@@ -373,56 +424,80 @@ def markers_integration(dic):
 ###########################################################
 
 
-def write_to_file(filename, dic):
+def write_to_file(filename, dic,
+                  cmt_symb='#', sep='\t',
+                  is_str_kev_to_MeV=True):
     """Write data to a text file."""
+    if is_str_kev_to_MeV:
+        dic['Energy unit'] = re.sub('MeV', 'keV', dic['Energy unit'])
+    # Measurement settings information
+    keys_info = [
+        '',
+        'Sample name',
+        '',
+        'Sample id',
+        'Sample type',
+        'User name',
+        'Sample description',
+        '',
+        'Start time',
+        'Real time',
+        'Live time',
+        '',
+        'Total counts',
+        '',
+        'Left marker',
+        'Right marker',
+        'Counts in markers',
+        '',
+        'Energy unit',
+        '',
+    ]
+    lines_info = []
+    for k in keys_info:
+        if k in dic:
+            k_w_unit = k
+            if re.search('(?i)Real|Live\s*time', k):
+                k_w_unit += ' (s)'
+            lines_info.append('{} {}: {}\n'.format(cmt_symb, k_w_unit, dic[k]))
+        else:
+            lines_info.append(f'{cmt_symb}\n')
 
+    # Column headers
+    _headers = ['Channel (ch)',
+                'Energy ({})'.format(dic['Energy unit']),
+                'Count (cnt)',
+                'Count rate (cps)']
+    header = sep.join(_headers)
+
+    # Write the content to a file.
     with open(filename, 'w') as f:
-        f.write('#\n')
-        f.write('# Sample name: {}\n'.format(dic['Sample name']))
-        f.write('\n')
+        # Measurement settings information
+        for line in lines_info:
+            f.write(line)
 
-        f.write('# Sample id: {}\n'.format(dic['Sample id']))
-        f.write('# Sample type: {}\n'.format(dic['Sample type']))
-        f.write('# User name: {}\n'.format(dic['User name']))
-        f.write('# Sample description: {}\n'.format(dic['Sample description']))
-        f.write('#\n')
-
-        f.write('# Start time: {}\n'.format(dic['Start time']))
-        f.write('# Real time (s): {:.3f}\n'.format(dic['Real time']))
-        f.write('# Live time (s): {:.3f}\n'.format(dic['Live time']))
-        f.write('#\n')
-
-        f.write('# Total counts: {}\n'.format(dic['Total counts']))
-        f.write('#\n')
-
-        f.write('# Left marker: {}\n'.format(dic['Left marker']))
-        f.write('# Right marker: {}\n'.format(dic['Right marker']))
-        f.write('# Counts: {}\n'.format(dic['Counts in markers']))
-        f.write('#\n')
-
+        # Calibration information
         f.write('# Energy calibration coefficients (E = sum(Ai * n**i))\n')
         for j, co in enumerate(dic['Energy coefficients']):
-            f.write('#    A{} = {:.6e}\n'.format(j, co))
-        f.write('# Energy unit: {}\n'.format(dic['Energy unit']))
-        f.write('#\n')
-
-        f.write('# Shape calibration coefficients (FWHM = B0 + B1*E^(1/2)  Low Tail= B2 + B3*E)\n')
+            f.write('{} - A{} = {}\n'.format(cmt_symb, j, co))
+        f.write('# Shape calibration coefficients (FWHM = B0 + B1*E^(1/2);'
+                + ' Lower tail= B2 + B3*E)\n')
         for j, co in enumerate(dic['Shape coefficients']):
-            f.write('#    B{} = {:.6e}\n'.format(j, co))
-        f.write('# Energy unit: {}\n'.format(dic['Energy unit']))
-        f.write('#\n')
+            f.write('{} - B{} = {}\n'.format(cmt_symb, j, co))
+        f.write('{}\n\n'.format(cmt_symb))
 
-        f.write('# Channel data\n')
-        f.write('#     n     energy({})     counts     rate(1/s)\n'.format(dic['Energy unit']))
-        f.write('#'+50*'-'+'\n')
-        for i, j, k in zip(dic['Channels'], dic['Energy'], dic['Channels data']):
-            f.write('{:4d}\t{:.3e}\t{}\t{:.3e}\n'.format(i, j, k, k/dic['Live time']))
+        # Measured data
+        f.write('{}\n'.format(cmt_symb))
+        f.write('{} {}\n'.format(cmt_symb, header))
+        f.write('{}\n'.format(cmt_symb))
+        for i, j, k in zip(dic['Channels'],
+                           dic['Energy'],
+                           dic['Channels data']):
+            the_data = sep.join(map(str, [i, j, k, k/dic['Live time']]))
+            f.write('{}\n'.format(the_data))
 
 
 if __name__ == "__main__":
-
-    import os
-
     # Check if command line argument is given
     if len(sys.argv) < 2:
         # Default name if not provided
@@ -433,25 +508,30 @@ if __name__ == "__main__":
         print('*'*10 + 'Reading file:' + filename + '\n')
     else:
         filename = sys.argv[1]
+        if len(sys.argv) >= 3:
+            out_path = sys.argv[2]
+        else:
+            out_path = os.path.dirname(filename)
 
-    c = read_cnf_file(filename, 'TRUE')
+    c = read_cnf_file(filename, out_path, 'TRUE')
 
-    print('Sample id: {}'.format(c['Sample id']))
-    print('Measurement mode: {}'.format(c['Measurement mode']))
+    # print('Sample id: {}'.format(c['Sample id']))
+    # print('Measurement mode: {}'.format(c['Measurement mode']))
 
     chan = c['Channels']
     n_chan = c['Number of channels']
     chan_data = c['Channels data']
     energy = c['Energy']
-    print('Number of channels used: '+str(n_chan))
+    # print('Number of channels used: '+str(n_chan))
 
     # Testing channels and energy calibration
     inchan = 250
-    print('At channel {}:'.format(inchan))
-    print('\t Counts: {}'.format(chan_data[np.where(chan == inchan)][0]))
-    print('\t Energy: {}'.format(energy[np.where(chan == inchan)][0]))
+    # print('At channel {}:'.format(inchan))
+    # print('\t Counts: {}'.format(chan_data[np.where(chan == inchan)][0]))
+    # print('\t Energy: {}'.format(energy[np.where(chan == inchan)][0]))
 
-    if True:
+    is_plot = False
+    if is_plot:
         import matplotlib.pyplot as plt
         fig1 = plt.figure(1, figsize=(8, 8))
 
