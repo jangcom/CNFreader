@@ -1,3 +1,6 @@
+This is a forked repo of [CNFreader](https://github.com/pbellino/CNFreader).
+
+---
 
 CNFreader
 =========
