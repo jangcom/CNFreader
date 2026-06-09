@@ -457,7 +457,7 @@ def write_to_file(filename, dic,
     for k in keys_info:
         if k in dic:
             k_w_unit = k
-            if re.search('(?i)Real|Live\s*time', k):
+            if re.search(r'(?i)Real|Live\s*time', k):
                 k_w_unit += ' (s)'
             lines_info.append('{} {}: {}\n'.format(cmt_symb, k_w_unit, dic[k]))
         else:
