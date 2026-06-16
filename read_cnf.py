@@ -340,7 +340,7 @@ def get_channel_data(f, offs_param, offs_chan):
     """Read channel data."""
 
     # Total number of channels
-    n_channels = uint8_at(f, offs_param + 0x00ba) * 256
+    n_channels = int(uint8_at(f, offs_param + 0x00ba)) * 256
     # Data in each channel
     f.seek(offs_chan + 0x200)
     chan_data = np.fromfile(f, dtype='<u4', count=n_channels)
